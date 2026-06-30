@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CuriousMD</title>
+<style nonce="{nonce}">{css}</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="head">
+      <div class="brand">
+        <h2>CuriousMD</h2>
+        <p>Open files</p>
+      </div>
+    </div>
+    <ul id="files"></ul>
+    <section class="browser" aria-label="Filesystem browser">
+      <div class="browser-head">
+        <h3>Browse Files</h3>
+        <button id="browser-home" type="button" title="Go to root">⌂</button>
+        <button id="browser-up" type="button" title="Go up one folder">↑</button>
+        <button id="browser-refresh" type="button" title="Refresh">↻</button>
+      </div>
+      <div class="cwd" id="browser-path"></div>
+      <ul id="browser-list"></ul>
+      <div class="status" id="browser-status"></div>
+    </section>
+  </aside>
+  <main>
+    <div class="toolbar">
+      <span class="title" id="title"></span>
+      <span class="grow"></span>
+      <button id="edit-btn" type="button" title="Toggle edit mode">Edit</button>
+      <button id="save-btn" type="button" title="Save (Ctrl+S)">Save</button>
+      <input id="search" type="search" placeholder="Search (Ctrl+F or /)" autocomplete="off" aria-label="Search document">
+      <button id="prev" type="button" title="Previous (Shift+Enter)" aria-label="Previous match">◀</button>
+      <button id="next" type="button" title="Next (Enter)" aria-label="Next match">▶</button>
+      <span class="count" id="count"></span>
+    </div>
+    <article class="content" id="content"></article>
+  </main>
+</div>
+<script nonce="{nonce}">window.__BOOTSTRAP__ = {bootstrap};</script>
+<script nonce="{nonce}">{js}</script>
+</body>
+</html>
