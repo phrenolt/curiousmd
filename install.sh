@@ -48,6 +48,10 @@ if command -v update-desktop-database &> /dev/null; then
     update-desktop-database "$DESKTOP_DIR"
 fi
 
+if command -v xdg-mime &> /dev/null; then
+    xdg-mime default mdview.desktop text/markdown
+fi
+
 echo "Created desktop entry at $DESKTOP_FILE"
 
 echo ""

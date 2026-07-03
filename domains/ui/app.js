@@ -36,21 +36,22 @@
   const ALLOWED_TAGS = new Set([
     'A', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'EM', 'H1', 'H2', 'H3', 'H4',
     'H5', 'H6', 'HR', 'IMG', 'LI', 'MARK', 'OL', 'P', 'PRE', 'SPAN',
-    'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL'
+    'STRONG', 'SUB', 'SUP', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL'
   ]);
   const ALLOWED_ATTRS = {
     A: new Set(['href', 'rel', 'title']),
     CODE: new Set(['class']),
-    H1: new Set(['id']),
-    H2: new Set(['id']),
-    H3: new Set(['id']),
-    H4: new Set(['id']),
-    H5: new Set(['id']),
-    H6: new Set(['id']),
-    IMG: new Set(['alt', 'decoding', 'loading', 'src', 'title']),
+    H1: new Set(['id', 'class']),
+    H2: new Set(['id', 'class']),
+    H3: new Set(['id', 'class']),
+    H4: new Set(['id', 'class']),
+    H5: new Set(['id', 'class']),
+    H6: new Set(['id', 'class']),
+    IMG: new Set(['alt', 'decoding', 'loading', 'src', 'title', 'width']),
+    P: new Set(['class']),
     SPAN: new Set(['class']),
-    TD: new Set(['class']),
-    TH: new Set(['class'])
+    TD: new Set(['class', 'width', 'valign']),
+    TH: new Set(['class', 'width', 'valign'])
   };
 
   function isSafeMarkdownUrl(value, tagName) {
@@ -71,6 +72,8 @@
       if (tagName === 'CODE') return /^lang-[A-Za-z0-9_-]+$/.test(c);
       if (tagName === 'SPAN') return c === 'blocked-link' || c === 'blocked-image';
       if (tagName === 'TD' || tagName === 'TH') return /^align-(left|center|right)$/.test(c);
+      if (/^H[1-6]$/.test(tagName)) return c === 'text-center';
+      if (tagName === 'P') return c === 'text-center';
       return false;
     });
   }
@@ -106,6 +109,8 @@
         if (name === 'rel') el.setAttribute('rel', 'noopener noreferrer');
         if (name === 'loading' && value !== 'lazy') el.setAttribute('loading', 'lazy');
         if (name === 'decoding' && value !== 'async') el.setAttribute('decoding', 'async');
+        if (name === 'width' && !/^\d+%?$/.test(value)) { el.removeAttribute('width'); continue; }
+        if (name === 'valign' && !/^(top|middle|bottom|baseline)$/i.test(value)) { el.removeAttribute('valign'); continue; }
       }
     }
     for (const el of remove) {

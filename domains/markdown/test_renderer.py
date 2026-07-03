@@ -1,5 +1,5 @@
 import unittest
-from domains.markdown.renderer import md_to_html, render_inline, slugify
+from domains.markdown.renderer import md_to_html, render_inline, slugify, normalize_safe_html
 
 
 class TestRenderInline(unittest.TestCase):
@@ -50,6 +50,16 @@ class TestRenderInline(unittest.TestCase):
         self.assertIn('<img', out)
         self.assertIn('alt="alt"', out)
 
+    def test_nested_image_in_link(self):
+        out = render_inline("[![alt](img.png)](https://example.com)")
+        self.assertIn('<a href="https://example.com"', out)
+        self.assertIn('<img alt="alt" src="img.png"', out)
+        
+    def test_nested_image_in_link_blocked(self):
+        out = render_inline("[![alt](javascript:evil)](https://example.com)")
+        self.assertIn('<a href="https://example.com"', out)
+        self.assertIn('blocked-image', out)
+
     def test_javascript_image_blocked(self):
         out = render_inline("![alt](javascript:evil)")
         self.assertIn("blocked-image", out)
@@ -77,6 +87,87 @@ class TestSluggify(unittest.TestCase):
 
     def test_empty(self):
         self.assertEqual(slugify(""), "section")
+
+class TestSafeHtmlPreProcessor(unittest.TestCase):
+    def test_safe_tags_converted_to_markdown(self):
+        html = '<a href="https://example.com"><img src="img.png" alt="alt"></a>'
+        out = normalize_safe_html(html)
+        self.assertEqual(out, '[![alt](img.png)](https://example.com)')
+
+        html2 = '<h1>Title</h1>'
+        out2 = normalize_safe_html(html2)
+        self.assertEqual(out2, '\n# Title\n\n')
+
+    def test_unsafe_tags_escaped(self):
+        html = '<script>alert(1)</script>'
+        out = normalize_safe_html(html)
+        self.assertEqual(out, '<script>alert(1)</script>')
+        self.assertIn('&lt;script&gt;alert(1)&lt;/script&gt;', md_to_html(html))
+
+        html2 = '<iframe src="evil.com"></iframe>'
+        out2 = normalize_safe_html(html2)
+        self.assertEqual(out2, '<iframe src="evil.com"></iframe>')
+        self.assertIn('&lt;iframe src=&quot;evil.com&quot;&gt;&lt;/iframe&gt;', md_to_html(html2))
+
+    def test_styling_attributes_stripped(self):
+        html = '<p align="center">text</p>'
+        out = normalize_safe_html(html)
+        self.assertIn('{center}', out)
+        self.assertIn('text', out)
+
+    def test_image_width_and_align_converted(self):
+        html = '<p align="center"><img src="img.png" alt="alt" width="140"></p>'
+        out = normalize_safe_html(html)
+        self.assertIn('{center}', out)
+        self.assertIn('![alt](img.png#w140)', out)
+
+    def test_image_width_preserved_exactly(self):
+        html = '<img src="img.png" alt="alt" width="820">'
+        out = md_to_html(html)
+        self.assertIn('width="820"', out)
+        self.assertIn('src="img.png"', out)
+
+    def test_code_blocks_protected(self):
+        md = '```html\n<script>alert(1)</script>\n```'
+        out = normalize_safe_html(md)
+        self.assertEqual(out, md)
+
+    def test_inline_code_protected(self):
+        md = 'use `<script>` tag'
+        out = normalize_safe_html(md)
+        self.assertEqual(out, md)
+
+    def test_centered_heading_emits_marker(self):
+        html = '<h1 align="center">aceman</h1>'
+        out = normalize_safe_html(html)
+        self.assertIn('# aceman {center}', out)
+
+    def test_centered_heading_renders_with_class(self):
+        html = '<h1 align="center">aceman</h1>'
+        out = md_to_html(html)
+        self.assertIn('class="text-center"', out)
+        self.assertIn('aceman', out)
+
+    def test_non_centered_heading_has_no_class(self):
+        html = '<h1>plain</h1>'
+        out = md_to_html(html)
+        self.assertNotIn('text-center', out)
+        self.assertIn('plain', out)
+
+    def test_centered_button_in_paragraph(self):
+        html = '<p align="center"><a href="https://example.com"><img src="btn.png" alt="Button" width="240"></a></p>'
+        out = md_to_html(html)
+        self.assertIn('class="text-center"', out)
+        self.assertIn('width="240"', out)
+        self.assertIn('src="btn.png"', out)
+        self.assertIn('href="https://example.com"', out)
+
+    def test_centered_paragraph_keeps_images_inline(self):
+        html = '<p align="center"><a href="#1"><img src="a.svg" alt="a"></a> <a href="#2"><img src="b.svg" alt="b"></a></p>'
+        out = md_to_html(html)
+        self.assertIn('class="text-center"', out)
+        # Both images should be in the same <p>, not separate blocks
+        self.assertEqual(out.count('<p'), 1)
 
 
 class TestMdToHtml(unittest.TestCase):
@@ -151,6 +242,136 @@ class TestMdToHtml(unittest.TestCase):
     def test_blank_lines_ignored(self):
         out = md_to_html("\n\n# H\n\n")
         self.assertIn("<h1", out)
+
+
+class TestSecurityAudit(unittest.TestCase):
+    """Tests derived from a manual security audit of the rendering pipeline.
+
+    Each test targets a specific attack vector that was identified during
+    the audit and verified to be defended against.
+    """
+
+    # -- 1. ReDoS: pathological regex input should not hang --
+
+    def test_redos_nested_emphasis_markers(self):
+        """Deeply nested emphasis markers must not cause catastrophic backtracking."""
+        evil = "*" * 500 + "a" + "*" * 500
+        import time
+        t0 = time.monotonic()
+        render_inline(evil)
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 2.0, "render_inline took too long — possible ReDoS")
+
+    def test_redos_nested_brackets(self):
+        """Deeply nested brackets must not cause catastrophic backtracking."""
+        evil = "[" * 500 + "a" + "](" + "x" * 500 + ")"
+        import time
+        t0 = time.monotonic()
+        render_inline(evil)
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 2.0, "render_inline took too long — possible ReDoS")
+
+    # -- 2. URL scheme smuggling with control characters --
+
+    def test_javascript_with_null_byte(self):
+        """Null bytes in scheme must not bypass the scheme check."""
+        out = render_inline("![x](java\x00script:alert(1))")
+        self.assertNotIn("<img", out)
+
+    def test_javascript_with_tab_chars(self):
+        """Tab characters in scheme must not bypass the scheme check."""
+        out = render_inline("![x](java\tscript:alert(1))")
+        self.assertNotIn("javascript", out.lower())
+
+    def test_javascript_with_newline(self):
+        """Newline in URL must not bypass the scheme check."""
+        out = render_inline("[x](java\nscript:alert(1))")
+        self.assertNotIn("javascript", out.lower())
+
+    # -- 3. Case-mixed scheme evasion --
+
+    def test_javascript_mixed_case_link(self):
+        """Mixed-case 'JaVaScRiPt:' must be blocked."""
+        out = render_inline("[x](JaVaScRiPt:alert(1))")
+        self.assertIn("blocked-link", out)
+        self.assertNotIn("href", out)
+
+    def test_javascript_mixed_case_image(self):
+        """Mixed-case 'JavaScript:' on images must be blocked."""
+        out = render_inline("![x](JavaScript:alert(1))")
+        self.assertIn("blocked-image", out)
+        self.assertNotIn("<img", out)
+
+    # -- 4. vbscript scheme --
+
+    def test_vbscript_link_blocked(self):
+        """vbscript: scheme must be blocked."""
+        out = render_inline("[x](vbscript:MsgBox)")
+        self.assertIn("blocked-link", out)
+        self.assertNotIn("href", out)
+
+    def test_vbscript_image_blocked(self):
+        """vbscript: scheme on images must be blocked."""
+        out = render_inline("![x](vbscript:MsgBox)")
+        self.assertIn("blocked-image", out)
+        self.assertNotIn("<img", out)
+
+    # -- 5. HTML onerror / onload attribute injection --
+
+    def test_img_onerror_stripped_by_preprocessor(self):
+        """<img onerror=...> must not survive into the final HTML."""
+        html = '<img src="x" onerror="alert(1)" alt="xss">'
+        out = md_to_html(html)
+        self.assertNotIn("onerror", out)
+        self.assertNotIn("alert(1)", out)
+
+    def test_img_onload_stripped_by_preprocessor(self):
+        """<img onload=...> must not survive into the final HTML."""
+        html = '<img src="img.png" onload="alert(1)">'
+        out = md_to_html(html)
+        self.assertNotIn("onload", out)
+        self.assertNotIn("alert(1)", out)
+
+    def test_svg_onload_escaped(self):
+        """<svg onload=...> must be escaped to harmless text."""
+        html = '<svg onload="alert(1)"></svg>'
+        out = md_to_html(html)
+        self.assertNotIn("<svg", out)
+        self.assertIn("&lt;svg", out)
+
+    # -- 6. Alt-text attribute injection --
+
+    def test_alt_text_quote_injection(self):
+        """Quotes in alt text must be escaped so they can't break out of the attribute."""
+        out = render_inline('![" onload="alert(1)](img.png)')
+        # The quote must be escaped — the browser must not see an unescaped "
+        # that could terminate the alt attribute and start an onload handler.
+        self.assertIn('&quot;', out)
+        # Verify the onload never appears as an actual HTML attribute
+        self.assertNotIn('onload="alert', out)
+
+    def test_alt_text_angle_bracket_injection(self):
+        """Angle brackets in alt text must be escaped."""
+        out = render_inline('![<script>alert(1)</script>](img.png)')
+        self.assertNotIn('<script>', out)
+
+    # -- 7. Full pipeline end-to-end XSS attempts --
+
+    def test_e2e_script_in_markdown_paragraph(self):
+        """A raw <script> tag in a paragraph must be fully escaped."""
+        out = md_to_html("Hello <script>alert(1)</script> world")
+        self.assertNotIn("<script>", out)
+        self.assertIn("&lt;script&gt;", out)
+
+    def test_e2e_img_onerror_in_markdown(self):
+        """An <img onerror> in raw markdown must have the handler stripped."""
+        out = md_to_html('<img src=x onerror=alert(1)>')
+        self.assertNotIn("onerror", out)
+
+    def test_e2e_nested_html_in_link(self):
+        """HTML inside a markdown link label must be escaped."""
+        out = md_to_html('[<img src=x onerror=alert(1)>](https://example.com)')
+        self.assertNotIn("onerror", out)
 
 
 if __name__ == "__main__":
