@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from domains.filesystem.browser import FilesystemBrowser
+from domains.filesystem.browser import FilesystemBrowser, MAX_FILE_SIZE
 
 
 class TestResolve(unittest.TestCase):
@@ -17,14 +17,18 @@ class TestResolve(unittest.TestCase):
         os.makedirs(sub)
         self.assertEqual(self.browser.resolve(sub), sub)
 
-    def test_path_outside_root_clamped(self):
+    def test_path_outside_root_rejected(self):
         escaped = os.path.join(self.tmp, "..", "..", "etc", "passwd")
-        result = self.browser.resolve(escaped)
-        self.assertTrue(result == self.tmp or result.startswith(self.tmp + os.sep))
+        self.assertIsNone(self.browser.resolve(escaped))
 
-    def test_absolute_path_outside_clamped(self):
-        result = self.browser.resolve("/etc/passwd")
-        self.assertTrue(result == self.tmp or result.startswith(self.tmp + os.sep))
+    def test_absolute_path_outside_rejected(self):
+        self.assertIsNone(self.browser.resolve("/etc/passwd"))
+
+    def test_hidden_path_is_rejected(self):
+        hidden = os.path.join(self.tmp, ".private", "notes.md")
+        os.makedirs(os.path.dirname(hidden))
+        open(hidden, "w").close()
+        self.assertIsNone(self.browser.resolve(hidden))
 
 
 class TestListDir(unittest.TestCase):
@@ -85,6 +89,96 @@ class TestListDir(unittest.TestCase):
     def test_returns_dir_key(self):
         result = self.browser.list_dir()
         self.assertIn("dir", result)
+
+    def test_excludes_symlinked_directory_outside_root(self):
+        outside = tempfile.mkdtemp()
+        link = os.path.join(self.tmp, "outside")
+        try:
+            os.symlink(outside, link)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        names = [entry["name"] for entry in self.browser.list_dir()["entries"]]
+        self.assertNotIn("outside", names)
+
+    def test_excludes_symlinked_markdown_outside_root(self):
+        outside = tempfile.NamedTemporaryFile(suffix=".md", delete=False)
+        outside.close()
+        link = os.path.join(self.tmp, "outside.md")
+        try:
+            os.symlink(outside.name, link)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        names = [entry["name"] for entry in self.browser.list_dir()["entries"]]
+        self.assertNotIn("outside.md", names)
+
+
+class TestOpenAndWrite(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.browser = FilesystemBrowser(root=self.tmp)
+        self.docs = []
+
+    def _add(self, name, content, dir=""):
+        self.docs.append({"name": name, "content": content, "dir": dir})
+        return str(len(self.docs))
+
+    def _write(self, name, content="content"):
+        path = os.path.join(self.tmp, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(content)
+        return path
+
+    def test_opens_markdown_inside_root(self):
+        path = self._write("notes.md", "allowed")
+        doc, error = self.browser.open_file(path, self._add)
+        self.assertIsNone(error)
+        self.assertEqual(doc["name"], "notes.md")
+        self.assertEqual(self.docs[0]["content"], "allowed")
+
+    def test_rejects_non_markdown_file(self):
+        path = self._write("secret.txt")
+        doc, error = self.browser.open_file(path, self._add)
+        self.assertIsNone(doc)
+        self.assertEqual(error, "not a markdown file")
+
+    def test_rejects_hidden_markdown_file(self):
+        path = self._write(".secret.md")
+        doc, error = self.browser.open_file(path, self._add)
+        self.assertIsNone(doc)
+        self.assertEqual(error, "not found")
+
+    def test_rejects_markdown_symlink_outside_root(self):
+        outside = tempfile.NamedTemporaryFile(suffix=".md", delete=False)
+        outside.write(b"sensitive")
+        outside.close()
+        link = os.path.join(self.tmp, "notes.md")
+        try:
+            os.symlink(outside.name, link)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        doc, error = self.browser.open_file(link, self._add)
+        self.assertIsNone(doc)
+        self.assertEqual(error, "not found")
+
+    def test_rejects_oversized_markdown_file(self):
+        path = self._write("large.md", "x" * (MAX_FILE_SIZE + 1))
+        doc, error = self.browser.open_file(path, self._add)
+        self.assertIsNone(doc)
+        self.assertEqual(error, "file is too large")
+
+    def test_write_revalidates_root_boundary(self):
+        outside = tempfile.NamedTemporaryFile(suffix=".md", delete=False)
+        outside.write(b"sensitive")
+        outside.close()
+        link = os.path.join(self.tmp, "notes.md")
+        try:
+            os.symlink(outside.name, link)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        self.assertEqual(self.browser.write_file(link, "changed"), "not found")
+        with open(outside.name, "r", encoding="utf-8") as file:
+            self.assertEqual(file.read(), "sensitive")
 
 
 if __name__ == "__main__":

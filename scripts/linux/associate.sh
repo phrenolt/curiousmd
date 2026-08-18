@@ -24,5 +24,5 @@ if [ -f "$DESKTOP_FILE" ]; then
     
     echo "Successfully associated .md files with CuriousMD."
 else
-    echo "Could not find desktop entry at $DESKTOP_FILE. Please run install.sh first."
+    echo "Could not find desktop entry at $DESKTOP_FILE. Please run scripts/linux/install.sh first."
 fi

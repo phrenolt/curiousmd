@@ -15,3 +15,6 @@ Thumbs.db
 # Backups / temporary files
 *.bak
 *.tmp
+
+# Sandboxed npm test staging
+unsafe/

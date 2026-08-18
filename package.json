@@ -1,0 +1,7 @@
+{
+  "name": "curiousmd-ui-tests",
+  "private": true,
+  "scripts": {
+    "test": "node --test domains/ui/test_app_logic.js"
+  }
+}

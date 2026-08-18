@@ -5,20 +5,23 @@ import os
 _UI_DIR = os.path.dirname(os.path.abspath(__file__))
 
 _CSS = None
+_LOGIC_JS = None
 _JS = None
 _PAGE = None
 
 
 def _assets():
-    global _CSS, _JS, _PAGE
+    global _CSS, _LOGIC_JS, _JS, _PAGE
     if _CSS is None:
         with open(os.path.join(_UI_DIR, "styles.css"), "r", encoding="utf-8") as f:
             _CSS = f.read()
+        with open(os.path.join(_UI_DIR, "app_logic.js"), "r", encoding="utf-8") as f:
+            _LOGIC_JS = f.read()
         with open(os.path.join(_UI_DIR, "app.js"), "r", encoding="utf-8") as f:
             _JS = f.read()
         with open(os.path.join(_UI_DIR, "template.html"), "r", encoding="utf-8") as f:
             _PAGE = f.read()
-    return _CSS, _JS, _PAGE
+    return _CSS, _LOGIC_JS, _JS, _PAGE
 
 
 def json_for_script(obj):
@@ -31,7 +34,7 @@ def json_for_script(obj):
 
 
 def render_index(docs, active, browse_root, browse_path):
-    css, js, page = _assets()
+    css, logic_js, js, page = _assets()
     bootstrap = {
         "docs": docs,
         "active": active,
@@ -41,6 +44,7 @@ def render_index(docs, active, browse_root, browse_path):
     nonce = base64.b64encode(os.urandom(16)).decode("ascii")
     body = page.format(
         css=css,
+        logic_js=logic_js,
         js=js,
         bootstrap=json_for_script(bootstrap),
         nonce=nonce,

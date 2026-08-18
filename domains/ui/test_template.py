@@ -78,6 +78,51 @@ class TestRenderIndex(unittest.TestCase):
         # regression: spaces must not be replaced with
         self.assertNotIn("\\u2028", html.split("__BOOTSTRAP__")[1].split("</script>")[0])
 
+    def test_theme_control_and_dark_palette_present(self):
+        html, _ = self._render()
+        self.assertIn('id="theme-toggle"', html)
+        self.assertIn('[data-theme="dark"]', html)
+        self.assertIn('--accent: #bd9438', html)
+        self.assertIn("curiousmd-theme", html)
+
+    def test_file_browser_controls_have_prominent_icons(self):
+        html, _ = self._render()
+        self.assertIn('.browser-head button', html)
+        self.assertIn('font-size: 19px; font-weight: 900', html)
+        self.assertEqual(html.count('class="browser-icon"'), 3)
+        self.assertIn('fill: currentColor', html)
+
+    def test_toolbar_button_labels_are_bold(self):
+        html, _ = self._render()
+        self.assertIn('.toolbar button {', html)
+        self.assertIn('font-size: 14px; font-weight: 700', html)
+
+    def test_shortcuts_dialog_uses_shared_registry(self):
+        html, _ = self._render()
+        self.assertIn('id="shortcuts-toggle"', html)
+        self.assertIn('id="shortcuts-overlay"', html)
+        self.assertIn('id="shortcuts-list"', html)
+        self.assertIn("const shortcuts = new Map", html)
+        self.assertIn("logic.shortcuts.values()", html)
+        self.assertIn("logic.shortcuts.get('show-shortcuts')", html)
+
+    def test_preview_navigation_menu_present(self):
+        html, _ = self._render()
+        self.assertIn('id="navigate-menu"', html)
+        self.assertIn('id="navigate-action"', html)
+        self.assertIn('>Navigate</button>', html)
+
+    def test_edit_search_includes_source_ranges(self):
+        html, _ = self._render()
+        self.assertIn("findEditorMatches", html)
+        self.assertIn("kind: 'editor'", html)
+
+    def test_editor_matches_are_centered_using_wrapped_layout(self):
+        html, _ = self._render()
+        self.assertIn("function editorCaretTop", html)
+        self.assertIn("whiteSpace = 'pre-wrap'", html)
+        self.assertIn("caretTop - ((editor.clientHeight - lineHeight) / 2)", html)
+
 
 if __name__ == "__main__":
     unittest.main()

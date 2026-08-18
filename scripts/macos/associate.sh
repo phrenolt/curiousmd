@@ -24,5 +24,5 @@ if [ -f "$PLIST" ]; then
     
     echo "Successfully associated .md and .markdown files with CuriousMD."
 else
-    echo "Could not find CuriousMD.app at $APP_BUNDLE. Please run install_mac.sh first."
+    echo "Could not find CuriousMD.app at $APP_BUNDLE. Please run scripts/macos/install.sh first."
 fi

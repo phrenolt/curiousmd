@@ -3,6 +3,11 @@ setlocal
 echo Installing CuriousMD for Windows...
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$s = (Get-Content '%~f0' -Raw) -split '#POWERSHELL_START#', 2; Invoke-Command -ScriptBlock ([scriptblock]::Create($s[1])) -ArgumentList '%~dp0'"
+if errorlevel 1 (
+    echo Installation failed.
+    pause
+    exit /b 1
+)
 
 echo.
 echo CuriousMD installation complete!
@@ -11,8 +16,16 @@ pause
 goto :EOF
 
 #POWERSHELL_START#
-param($appDir)
-$appDir = $appDir.TrimEnd('\')
+param($scriptDir)
+$scriptDir = $scriptDir.TrimEnd('\')
+if (Test-Path (Join-Path $scriptDir 'mdview.py')) {
+    $appDir = $scriptDir
+} else {
+    $appDir = [IO.Path]::GetFullPath((Join-Path $scriptDir '..\..'))
+}
+if (-not (Test-Path (Join-Path $appDir 'mdview.py'))) {
+    throw "Could not find mdview.py from $scriptDir"
+}
 $mdviewScript = Join-Path $appDir 'mdview.py'
 $binDir = Join-Path $env:LOCALAPPDATA 'CuriousMD\bin'
 

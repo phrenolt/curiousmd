@@ -3,14 +3,27 @@ setlocal
 echo Associating file extensions for CuriousMD...
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$s = (Get-Content '%~f0' -Raw) -split '#POWERSHELL_START#', 2; Invoke-Command -ScriptBlock ([scriptblock]::Create($s[1])) -ArgumentList '%~dp0'"
+if errorlevel 1 (
+    echo Association failed.
+    pause
+    exit /b 1
+)
 
 echo.
 pause
 goto :EOF
 
 #POWERSHELL_START#
-param($appDir)
-$appDir = $appDir.TrimEnd('\')
+param($scriptDir)
+$scriptDir = $scriptDir.TrimEnd('\')
+if (Test-Path (Join-Path $scriptDir 'mdview.py')) {
+    $appDir = $scriptDir
+} else {
+    $appDir = [IO.Path]::GetFullPath((Join-Path $scriptDir '..\..'))
+}
+if (-not (Test-Path (Join-Path $appDir 'mdview.py'))) {
+    throw "Could not find mdview.py from $scriptDir"
+}
 $mdviewScript = Join-Path $appDir 'mdview.py'
 
 $bundledPython = Join-Path $appDir 'python\python.exe'

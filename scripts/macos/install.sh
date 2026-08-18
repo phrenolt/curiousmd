@@ -4,7 +4,7 @@
 set -e
 
 # Setup absolute paths
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MDVIEW_SCRIPT="$APP_DIR/mdview.py"
 
 echo "Installing CuriousMD for macOS..."

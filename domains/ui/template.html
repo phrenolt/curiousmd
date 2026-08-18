@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
 <title>CuriousMD</title>
 <style nonce="{nonce}">{css}</style>
 </head>
@@ -18,9 +19,15 @@
     <section class="browser" aria-label="Filesystem browser">
       <div class="browser-head">
         <h3>Browse Files</h3>
-        <button id="browser-home" type="button" title="Go to root">⌂</button>
-        <button id="browser-up" type="button" title="Go up one folder">↑</button>
-        <button id="browser-refresh" type="button" title="Refresh">↻</button>
+        <button id="browser-home" type="button" title="Go to root" aria-label="Go to root">
+          <svg class="browser-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.2 12 3l9 8.2-1.7 1.9-1.3-1.2V21h-5v-6h-2v6H6v-9.1l-1.3 1.2L3 11.2Z"/></svg>
+        </button>
+        <button id="browser-up" type="button" title="Go up one folder" aria-label="Go up one folder">
+          <svg class="browser-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 8h-5v10H9V11H4l8-8Z"/></svg>
+        </button>
+        <button id="browser-refresh" type="button" title="Refresh" aria-label="Refresh">
+          <svg class="browser-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 1 0 20 12h-3a5 5 0 1 1-1.5-3.5L13 11h8V3l-3.3 3.3Z"/></svg>
+        </button>
       </div>
       <div class="cwd" id="browser-path"></div>
       <ul id="browser-list"></ul>
@@ -31,6 +38,8 @@
     <div class="toolbar">
       <span class="title" id="title"></span>
       <span class="grow"></span>
+      <button id="theme-toggle" type="button" title="Switch to dark theme" aria-label="Switch to dark theme">Dark</button>
+      <button id="shortcuts-toggle" type="button" title="Keyboard shortcuts (?)" aria-haspopup="dialog" aria-controls="shortcuts-overlay" aria-expanded="false">Shortcuts</button>
       <button id="edit-btn" type="button" title="Toggle edit mode">Edit</button>
       <button id="save-btn" type="button" title="Save (Ctrl+S)">Save</button>
       <input id="search" type="search" placeholder="Search (Ctrl+F or /)" autocomplete="off" aria-label="Search document">
@@ -41,7 +50,26 @@
     <article class="content" id="content"></article>
   </main>
 </div>
+<div id="navigate-menu" class="context-menu" role="menu" hidden>
+  <button id="navigate-action" type="button" role="menuitem">Navigate</button>
+</div>
+<div id="shortcuts-overlay" class="dialog-overlay" hidden>
+  <section class="shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+    <header>
+      <div>
+        <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+        <p>Available throughout CuriousMD unless noted.</p>
+      </div>
+      <button id="shortcuts-close" type="button" aria-label="Close keyboard shortcuts">×</button>
+    </header>
+    <table>
+      <thead><tr><th scope="col">Shortcut</th><th scope="col">Action</th></tr></thead>
+      <tbody id="shortcuts-list"></tbody>
+    </table>
+  </section>
+</div>
 <script nonce="{nonce}">window.__BOOTSTRAP__ = {bootstrap};</script>
+<script nonce="{nonce}">{logic_js}</script>
 <script nonce="{nonce}">{js}</script>
 </body>
 </html>

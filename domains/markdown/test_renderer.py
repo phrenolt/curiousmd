@@ -137,6 +137,13 @@ class TestSafeHtmlPreProcessor(unittest.TestCase):
         out = normalize_safe_html(md)
         self.assertEqual(out, md)
 
+    def test_autolink_protected(self):
+        md = 'Visit <https://example.com/docs>.'
+        self.assertEqual(normalize_safe_html(md), md)
+        out = md_to_html(md)
+        self.assertIn('href="https://example.com/docs"', out)
+        self.assertIn('>https://example.com/docs</a>', out)
+
     def test_centered_heading_emits_marker(self):
         html = '<h1 align="center">aceman</h1>'
         out = normalize_safe_html(html)
@@ -169,15 +176,30 @@ class TestSafeHtmlPreProcessor(unittest.TestCase):
         # Both images should be in the same <p>, not separate blocks
         self.assertEqual(out.count('<p'), 1)
 
+    def test_void_elements_do_not_leak_centering(self):
+        html = '<p align="center"><img src="a.svg" alt="a"><br></p><h2>plain</h2>'
+        out = md_to_html(html)
+        self.assertIn('<p class="text-center"', out)
+        self.assertIn('<h2 id="plain"', out)
+        self.assertIn('>plain</h2>', out)
+
+    def test_passthrough_attributes_are_sanitized(self):
+        html = '<table><tr><td class="align-right" width="50%" onclick="alert(1)" title="&quot;bad">x</td></tr></table>'
+        out = md_to_html(html)
+        self.assertIn('<td class="align-right" width="50%">x</td>', out)
+        self.assertNotIn('onclick', out)
+        self.assertNotIn('alert(1)', out)
+        self.assertNotIn('title=', out)
+
 
 class TestMdToHtml(unittest.TestCase):
     def test_heading_h1(self):
         out = md_to_html("# Hello")
-        self.assertIn('<h1 id="hello">Hello</h1>', out)
+        self.assertIn('<h1 id="hello" data-source-line="1">Hello</h1>', out)
 
     def test_heading_h2(self):
         out = md_to_html("## Sub")
-        self.assertIn('<h2 id="sub">Sub</h2>', out)
+        self.assertIn('<h2 id="sub" data-source-line="1">Sub</h2>', out)
 
     def test_duplicate_heading_slugs(self):
         out = md_to_html("# A\n# A\n# A")
@@ -195,11 +217,11 @@ class TestMdToHtml(unittest.TestCase):
 
     def test_paragraph(self):
         out = md_to_html("Hello world")
-        self.assertIn("<p>Hello world</p>", out)
+        self.assertIn('<p data-source-line="1">Hello world</p>', out)
 
     def test_fenced_code_block(self):
         out = md_to_html("```py\nfoo\n```")
-        self.assertIn('<pre><code class="lang-py">foo</code></pre>', out)
+        self.assertIn('<pre data-source-line="1"><code class="lang-py">foo</code></pre>', out)
 
     def test_fenced_code_escapes_html(self):
         out = md_to_html("```\n<script>\n```")
@@ -207,25 +229,25 @@ class TestMdToHtml(unittest.TestCase):
         self.assertNotIn("<script>", out)
 
     def test_horizontal_rule(self):
-        self.assertIn("<hr>", md_to_html("---"))
+        self.assertIn('<hr data-source-line="1">', md_to_html("---"))
 
     def test_blockquote(self):
         out = md_to_html("> quote")
-        self.assertIn("<blockquote>", out)
+        self.assertIn('<blockquote data-source-line="1">', out)
 
     def test_unordered_list(self):
         out = md_to_html("- a\n- b")
-        self.assertIn("<ul>", out)
-        self.assertIn("<li>", out)
+        self.assertIn('<ul data-source-line="1">', out)
+        self.assertIn('<li data-source-line="2">b</li>', out)
 
     def test_ordered_list(self):
         out = md_to_html("1. first\n2. second")
-        self.assertIn("<ol>", out)
+        self.assertIn('<ol data-source-line="1">', out)
 
     def test_table(self):
         md = "| A | B |\n|---|---|\n| 1 | 2 |"
         out = md_to_html(md)
-        self.assertIn("<table>", out)
+        self.assertIn('<table data-source-line="1">', out)
         self.assertIn("<th>", out)
         self.assertIn("<td>", out)
 
@@ -242,6 +264,26 @@ class TestMdToHtml(unittest.TestCase):
     def test_blank_lines_ignored(self):
         out = md_to_html("\n\n# H\n\n")
         self.assertIn("<h1", out)
+
+    def test_source_lines_track_markdown_blocks(self):
+        out = md_to_html("# One\n\nParagraph\n\n- first\n- second")
+        self.assertIn('data-source-line="1">One</h1>', out)
+        self.assertIn('<p data-source-line="3">Paragraph</p>', out)
+        self.assertIn('<li data-source-line="5">first</li>', out)
+        self.assertIn('<li data-source-line="6">second</li>', out)
+
+    def test_source_lines_survive_raw_html_normalization(self):
+        md = '<p>alpha</p>\n\none\n\nalpha'
+        out = md_to_html(md)
+        self.assertIn('<p data-source-line="1">alpha</p>', out)
+        self.assertIn('<p data-source-line="3">one</p>', out)
+        self.assertIn('<p data-source-line="5">alpha</p>', out)
+
+    def test_protected_code_preserves_following_source_lines(self):
+        md = '```html\n<p>inside</p>\n```\n\n<p>after</p>'
+        out = md_to_html(md)
+        self.assertIn('<pre data-source-line="1">', out)
+        self.assertIn('<p data-source-line="5">after</p>', out)
 
 
 class TestSecurityAudit(unittest.TestCase):

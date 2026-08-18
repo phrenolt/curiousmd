@@ -29,6 +29,7 @@ from domains.markdown.renderer import md_to_html
 from domains.ui.template import render_index
 
 _asset_root = None  # set at startup; used only to serve bundled static files
+ASSET_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico")
 
 
 # ---------- HTTP handler ----------
@@ -80,6 +81,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_json(self, obj, status=200):
         self._send(status, "application/json; charset=utf-8", json.dumps(obj))
+
+    def _read_text_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self._send_json({"error": "invalid content length"}, status=400)
+            return None
+        if length < 0 or length > MAX_FILE_SIZE:
+            self._send_json({"error": "request body is too large"}, status=413)
+            return None
+        return self.rfile.read(length).decode("utf-8", errors="replace")
 
     def _send_file(self, path):
         try:
@@ -169,6 +181,8 @@ class Handler(BaseHTTPRequestHandler):
             rel = path.lstrip("/")
             full = self._resolve_asset(rel)
             if full and os.path.isfile(full):
+                if not self._check_session():
+                    return
                 return self._send_file(full)
 
         self.send_error(404)
@@ -193,8 +207,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/preview":
             if not self._check_session():
                 return
-            length = int(self.headers.get("Content-Length", 0))
-            md = self.rfile.read(min(length, MAX_FILE_SIZE)).decode("utf-8", errors="replace")
+            md = self._read_text_body()
+            if md is None:
+                return
             return self._send_json({"html": md_to_html(md)})
 
         self.send_error(404)
@@ -212,14 +227,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"error": "not found"}, status=404)
             if not doc.get("dir"):
                 return self._send_json({"error": "file path unknown"}, status=400)
-            length = int(self.headers.get("Content-Length", 0))
-            new_content = self.rfile.read(min(length, MAX_FILE_SIZE)).decode("utf-8", errors="replace")
+            new_content = self._read_text_body()
+            if new_content is None:
+                return
             full_path = os.path.join(doc["dir"], doc["name"])
-            try:
-                with open(full_path, "w", encoding="utf-8") as f:
-                    f.write(new_content)
-            except OSError as e:
-                return self._send_json({"error": str(e)}, status=500)
+            error = browser.write_file(full_path, new_content)
+            if error:
+                return self._send_json({"error": error}, status=400)
             store.update(m.group(1), new_content)
             return self._send_json({"ok": True})
 
@@ -229,9 +243,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _resolve_asset(self, rel):
         rel = rel.replace("\\", "/").lstrip("/")
+        if not rel.lower().endswith(ASSET_EXTS):
+            return None
         full = os.path.realpath(os.path.join(_asset_root, rel))
         root = os.path.realpath(_asset_root)
-        if not (full == root or full.startswith(root + os.sep)):
+        try:
+            if os.path.commonpath((root, full)) != root:
+                return None
+        except ValueError:
+            return None
+        relative = os.path.relpath(full, root)
+        if any(part.startswith(".") for part in relative.split(os.sep)):
             return None
         return full
 
@@ -248,29 +270,28 @@ def preload_path(path):
     global _asset_root
     if os.path.isfile(path):
         abs_path = os.path.abspath(path)
-        _asset_root = os.path.dirname(abs_path) or os.getcwd()
-        browser.root = os.path.realpath(_asset_root)
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            store.add(os.path.basename(path), f.read(), dir=_asset_root)
-        return
+        _asset_root = os.path.realpath(os.path.dirname(abs_path) or os.getcwd())
+        browser.root = _asset_root
+        _, error = browser.open_file(abs_path, store.add)
+        return error
     if os.path.isdir(path):
-        _asset_root = os.path.abspath(path)
-        browser.root = os.path.realpath(_asset_root)
+        _asset_root = os.path.realpath(path)
+        browser.root = _asset_root
         found = []
-        for dirpath, dirnames, filenames in os.walk(path):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for dirpath, dirnames, filenames in os.walk(_asset_root):
+            dirnames[:] = [
+                name for name in dirnames
+                if not name.startswith(".")
+                and browser.resolve(os.path.join(dirpath, name)) is not None
+            ]
             for fn in filenames:
-                if fn.lower().endswith(MD_EXTS):
+                if not fn.startswith(".") and fn.lower().endswith(MD_EXTS):
                     found.append(os.path.join(dirpath, fn))
         found.sort(key=str.lower)
         for full in found:
-            abs_full = os.path.abspath(full)
-            try:
-                with open(full, "r", encoding="utf-8", errors="replace") as f:
-                    store.add(os.path.basename(full), f.read(),
-                              dir=os.path.dirname(abs_full))
-            except OSError:
-                pass
+            browser.open_file(full, store.add)
+        return None
+    return "not found"
 
 
 def main():
@@ -295,7 +316,10 @@ def main():
         if not os.path.exists(target):
             print(f"error: not found: {target}", file=sys.stderr)
             sys.exit(1)
-        preload_path(target)
+        error = preload_path(target)
+        if error:
+            print(f"error: unable to open {target}: {error}", file=sys.stderr)
+            sys.exit(1)
     else:
         _asset_root = os.getcwd()
         browser.root = os.path.realpath(_asset_root)

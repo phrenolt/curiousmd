@@ -7,6 +7,17 @@ from html.parser import HTMLParser
 LINK_SCHEMES = {"", "http", "https", "mailto"}
 IMAGE_SCHEMES = {"", "http", "https"}
 MAX_LINE_LEN = 4096
+HTML_VOID_TAGS = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "param", "source", "track", "wbr",
+})
+PASSTHROUGH_TAGS = frozenset({
+    "table", "tbody", "thead", "tr", "td", "th", "sub", "sup",
+})
+PASSTHROUGH_ATTRS = {
+    "td": frozenset({"class", "width", "valign"}),
+    "th": frozenset({"class", "width", "valign"}),
+}
 
 INLINE_RE = re.compile(
     r"(?P<code>`(?P<code_inner>[^`\n]+)`)"
@@ -34,43 +45,52 @@ class Document(Block):
     def __init__(self, children):
         self.children = children
 
-class ThematicBreak(Block): pass
+class ThematicBreak(Block):
+    def __init__(self, source_line=None):
+        self.source_line = source_line
 
 class Heading(Block):
-    def __init__(self, level, text, center=False):
+    def __init__(self, level, text, center=False, source_line=None):
         self.level = level
         self.text = text
         self.center = center
+        self.source_line = source_line
 
 class CodeBlock(Block):
-    def __init__(self, lang, code):
+    def __init__(self, lang, code, source_line=None):
         self.lang = lang
         self.code = code
+        self.source_line = source_line
 
 class Paragraph(Block):
-    def __init__(self, text, center=False):
+    def __init__(self, text, center=False, source_line=None):
         self.text = text
         self.center = center
+        self.source_line = source_line
 
 class BlockQuote(Block):
-    def __init__(self, children):
+    def __init__(self, children, source_line=None):
         self.children = children
+        self.source_line = source_line
 
 class List(Block):
-    def __init__(self, ordered, items):
+    def __init__(self, ordered, items, source_line=None):
         self.ordered = ordered
         self.items = items
+        self.source_line = source_line
 
 class ListItem(Node):
-    def __init__(self, content, nested):
+    def __init__(self, content, nested, source_line=None):
         self.content = content
         self.nested = nested
+        self.source_line = source_line
 
 class Table(Block):
-    def __init__(self, header, aligns, rows):
+    def __init__(self, header, aligns, rows, source_line=None):
         self.header = header
         self.aligns = aligns
         self.rows = rows
+        self.source_line = source_line
 
 
 # --- Inline Nodes ---
@@ -171,7 +191,14 @@ def parse_inline(text):
         nodes.append(Text(text[pos:]))
     return nodes
 
-def _parse_list(lines, i, base_indent):
+def _source_line(source_lines, index, line_offset=0):
+    if source_lines is not None and index < len(source_lines):
+        return source_lines[index]
+    return line_offset + index + 1
+
+
+def _parse_list(lines, i, base_indent, line_offset=0, source_lines=None):
+    list_line = _source_line(source_lines, i, line_offset)
     first = lines[i]
     indent = len(first) - len(first.lstrip(" "))
     if indent < base_indent:
@@ -193,11 +220,15 @@ def _parse_list(lines, i, base_indent):
         if cur_indent < indent:
             break
         if cur_indent > indent:
-            i, nested_list = _parse_list(lines, i, base_indent=cur_indent)
+            i, nested_list = _parse_list(
+                lines, i, base_indent=cur_indent, line_offset=line_offset,
+                source_lines=source_lines,
+            )
             if nested_list and items:
                 items[-1].nested.append(nested_list)
             continue
             
+        item_line = _source_line(source_lines, i, line_offset)
         content = m.group(3)
         i += 1
         cont = []
@@ -212,22 +243,26 @@ def _parse_list(lines, i, base_indent):
         nested = []
         if (i < len(lines) and re.match(r"^\s+([-*+]|\d+\.)\s+", lines[i])
                 and (len(lines[i]) - len(lines[i].lstrip(" "))) > indent):
-            i, nested_list = _parse_list(lines, i, base_indent=indent + 1)
+            i, nested_list = _parse_list(
+                lines, i, base_indent=indent + 1, line_offset=line_offset,
+                source_lines=source_lines,
+            )
             if nested_list:
                 nested.append(nested_list)
                 
-        items.append(ListItem(content, nested))
+        items.append(ListItem(content, nested, source_line=item_line))
         
     if not items:
         return i, None
-    return i, List(ordered, items)
+    return i, List(ordered, items, source_line=list_line)
 
-def parse_blocks(md):
+def parse_blocks(md, line_offset=0, source_lines=None):
     lines = md.splitlines()
     blocks = []
     i = 0
     while i < len(lines):
         raw = lines[i]
+        source_line = _source_line(source_lines, i, line_offset)
 
         m = re.match(r"^```(\w*)\s*$", raw)
         if m:
@@ -239,7 +274,7 @@ def parse_blocks(md):
                 i += 1
             if i < len(lines):
                 i += 1
-            blocks.append(CodeBlock(lang, "\n".join(buf)))
+            blocks.append(CodeBlock(lang, "\n".join(buf), source_line=source_line))
             continue
 
         if not raw.strip():
@@ -247,7 +282,7 @@ def parse_blocks(md):
             continue
 
         if re.match(r"^\s*([-*_])(\s*\1){2,}\s*$", raw):
-            blocks.append(ThematicBreak())
+            blocks.append(ThematicBreak(source_line=source_line))
             i += 1
             continue
 
@@ -257,7 +292,9 @@ def parse_blocks(md):
             center = text.endswith(' {center}')
             if center:
                 text = text[:-len(' {center}')]
-            blocks.append(Heading(len(h.group(1)), text, center=center))
+            blocks.append(Heading(
+                len(h.group(1)), text, center=center, source_line=source_line,
+            ))
             i += 1
             continue
 
@@ -265,24 +302,38 @@ def parse_blocks(md):
             nxt = lines[i + 1]
             if not re.match(r"^\s*([-*+]\s|\d+\.\s|>|#{1,6}\s|```)", raw):
                 if re.match(r"^=+\s*$", nxt):
-                    blocks.append(Heading(1, raw.strip()))
+                    blocks.append(Heading(1, raw.strip(), source_line=source_line))
                     i += 2
                     continue
                 if re.match(r"^-+\s*$", nxt):
-                    blocks.append(Heading(2, raw.strip()))
+                    blocks.append(Heading(2, raw.strip(), source_line=source_line))
                     i += 2
                     continue
 
         if re.match(r"^>\s?", raw):
+            quote_start = i
             block = []
             while i < len(lines) and re.match(r"^>\s?", lines[i]):
                 block.append(re.sub(r"^>\s?", "", lines[i]))
                 i += 1
-            blocks.append(BlockQuote(parse_blocks("\n".join(block))))
+            blocks.append(BlockQuote(
+                parse_blocks(
+                    "\n".join(block),
+                    line_offset=line_offset + quote_start,
+                    source_lines=(
+                        source_lines[quote_start:i]
+                        if source_lines is not None else None
+                    ),
+                ),
+                source_line=source_line,
+            ))
             continue
 
         if re.match(r"^\s*[-*+]\s+", raw) or re.match(r"^\s*\d+\.\s+", raw):
-            i, list_node = _parse_list(lines, i, base_indent=0)
+            i, list_node = _parse_list(
+                lines, i, base_indent=0, line_offset=line_offset,
+                source_lines=source_lines,
+            )
             if list_node:
                 blocks.append(list_node)
             continue
@@ -296,7 +347,7 @@ def parse_blocks(md):
             while i < len(lines) and lines[i].lstrip().startswith("|"):
                 rows.append(_split_row(lines[i]))
                 i += 1
-            blocks.append(Table(header, aligns, rows))
+            blocks.append(Table(header, aligns, rows, source_line=source_line))
             continue
 
         para = [raw]
@@ -311,7 +362,7 @@ def parse_blocks(md):
         center = text.startswith('{center} ')
         if center:
             text = text[len('{center} '):]
-        blocks.append(Paragraph(text, center=center))
+        blocks.append(Paragraph(text, center=center, source_line=source_line))
 
     return blocks
 
@@ -417,6 +468,10 @@ def slugify(text):
 def render_html(ast):
     seen_slugs = {}
 
+    def source_attr(node):
+        line = getattr(node, "source_line", None)
+        return f' data-source-line="{line}"' if line is not None else ""
+
     def get_slug(text):
         base = slugify(text)
         n = seen_slugs.get(base, 0)
@@ -425,36 +480,36 @@ def render_html(ast):
 
     def render_block(block):
         if isinstance(block, ThematicBreak):
-            return "<hr>"
+            return f"<hr{source_attr(block)}>"
         elif isinstance(block, Heading):
             rendered = render_inline(block.text)
             slug = get_slug(block.text)
             cls = ' class="text-center"' if block.center else ''
-            return f'<h{block.level} id="{slug}"{cls}>{rendered}</h{block.level}>'
+            return f'<h{block.level} id="{slug}"{cls}{source_attr(block)}>{rendered}</h{block.level}>'
         elif isinstance(block, CodeBlock):
             cls = f' class="lang-{html.escape(block.lang)}"' if block.lang else ""
             code = html.escape(block.code)
-            return f"<pre><code{cls}>{code}</code></pre>"
+            return f"<pre{source_attr(block)}><code{cls}>{code}</code></pre>"
         elif isinstance(block, BlockQuote):
             inner = "\n".join(render_block(child) for child in block.children)
-            return f"<blockquote>{inner}</blockquote>"
+            return f"<blockquote{source_attr(block)}>{inner}</blockquote>"
         elif isinstance(block, Paragraph):
             cls = ' class="text-center"' if block.center else ''
-            return f'<p{cls}>{render_inline(block.text)}</p>'
+            return f'<p{cls}{source_attr(block)}>{render_inline(block.text)}</p>'
         elif isinstance(block, List):
             tag = "ol" if block.ordered else "ul"
-            res = [f"<{tag}>"]
+            res = [f"<{tag}{source_attr(block)}>"]
             for item in block.items:
                 item_html = render_inline(item.content)
                 if item.nested:
                     nested_html = "\n".join(render_block(n) for n in item.nested)
-                    res.append(f"<li>{item_html}\n{nested_html}</li>")
+                    res.append(f"<li{source_attr(item)}>{item_html}\n{nested_html}</li>")
                 else:
-                    res.append(f"<li>{item_html}</li>")
+                    res.append(f"<li{source_attr(item)}>{item_html}</li>")
             res.append(f"</{tag}>")
             return "\n".join(res)
         elif isinstance(block, Table):
-            parts = ["<table><thead><tr>"]
+            parts = [f"<table{source_attr(block)}><thead><tr>"]
             for idx, cell in enumerate(block.header):
                 a = block.aligns[idx] if idx < len(block.aligns) else None
                 parts.append(f"<th{_align_attr(a)}>{render_inline(cell)}</th>")
@@ -482,16 +537,48 @@ class SafeHtmlPreProcessor(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=False)
         self.result = []
+        self.segments = []
         self.link_hrefs = []
         self.stack = []
         self.centered = 0
+
+    def _emit(self, text, follows_source_lines=False):
+        self.result.append(text)
+        self.segments.append((text, self.getpos()[0], follows_source_lines))
+
+    @staticmethod
+    def _passthrough_attrs(tag, attrs):
+        allowed = PASSTHROUGH_ATTRS.get(tag, frozenset())
+        safe_attrs = []
+        seen = set()
+        for name, value in attrs:
+            if name in seen or name not in allowed or value is None:
+                continue
+            seen.add(name)
+            if name == "class":
+                classes = value.split()
+                if not classes or any(
+                    cls not in {"align-left", "align-center", "align-right"}
+                    for cls in classes
+                ):
+                    continue
+                value = " ".join(classes)
+            elif name == "width" and not re.fullmatch(r"\d+%?", value):
+                continue
+            elif name == "valign" and value.lower() not in {
+                "top", "middle", "bottom", "baseline",
+            }:
+                continue
+            safe_attrs.append(f' {name}="{html.escape(value, quote=True)}"')
+        return "".join(safe_attrs)
         
     def handle_starttag(self, tag, attrs):
         attr_dict = dict(attrs)
         is_centered = attr_dict.get("align") == "center"
-        self.stack.append(is_centered)
-        if is_centered:
-            self.centered += 1
+        if tag not in HTML_VOID_TAGS:
+            self.stack.append((tag, is_centered))
+            if is_centered:
+                self.centered += 1
 
         if tag == "img":
             src = attr_dict.get("src", "")
@@ -504,103 +591,142 @@ class SafeHtmlPreProcessor(HTMLParser):
                     src += f"#w{w}"
                 except: pass
                 
-            self.result.append(f"![{alt}]({src})")
+            self._emit(f"![{alt}]({src})")
         elif tag == "a":
             href = attr_dict.get("href", "")
             self.link_hrefs.append(href)
-            self.result.append("[")
+            self._emit("[")
         elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
             level = int(tag[1])
-            self.result.append(f"\n{'#' * level} ")
+            self._emit(f"\n{'#' * level} ")
             self._heading_centered = is_centered or self.centered > 0
         elif tag in ("b", "strong"):
-            self.result.append("**")
+            self._emit("**")
         elif tag in ("i", "em"):
-            self.result.append("*")
+            self._emit("*")
         elif tag == "del":
-            self.result.append("~~")
+            self._emit("~~")
         elif tag in ("p", "div"):
             if is_centered:
-                self.result.append("\n\n{center} ")
+                self._emit("\n\n{center} ")
             else:
-                self.result.append("\n\n")
+                self._emit("\n\n")
         elif tag == "span":
             pass
         elif tag == "br":
-            self.result.append("  \n")
-        elif tag in ("table", "tbody", "thead", "tr", "td", "th", "sub", "sup"):
-            attr_str = "".join(f' {k}="{v}"' if v is not None else f' {k}' for k, v in attrs)
-            self.result.append(f"<{tag}{attr_str}>")
+            self._emit("  \n")
+        elif tag in PASSTHROUGH_TAGS:
+            attr_str = self._passthrough_attrs(tag, attrs)
+            self._emit(f"<{tag}{attr_str}>")
         else:
             attr_str = "".join(f' {k}="{v}"' if v is not None else f' {k}' for k, v in attrs)
-            self.result.append(f"<{tag}{attr_str}>")
+            self._emit(f"<{tag}{attr_str}>")
 
     def handle_endtag(self, tag):
-        if self.stack:
-            if self.stack.pop():
-                self.centered -= 1
+        if tag not in HTML_VOID_TAGS:
+            for index in range(len(self.stack) - 1, -1, -1):
+                if self.stack[index][0] == tag:
+                    closed = self.stack[index:]
+                    del self.stack[index:]
+                    self.centered -= sum(is_centered for _, is_centered in closed)
+                    break
 
         if tag == "a":
             if self.link_hrefs:
                 href = self.link_hrefs.pop()
-                self.result.append(f"]({href})")
+                self._emit(f"]({href})")
         elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
             if getattr(self, '_heading_centered', False):
-                self.result.append(" {center}")
+                self._emit(" {center}")
                 self._heading_centered = False
-            self.result.append("\n\n")
+            self._emit("\n\n")
         elif tag in ("p", "div"):
-            self.result.append("\n\n")
+            self._emit("\n\n")
         elif tag in ("b", "strong"):
-            self.result.append("**")
+            self._emit("**")
         elif tag in ("i", "em"):
-            self.result.append("*")
+            self._emit("*")
         elif tag == "del":
-            self.result.append("~~")
+            self._emit("~~")
         elif tag in ("span", "br", "img"):
             pass
-        elif tag in ("table", "tbody", "thead", "tr", "td", "th", "sub", "sup"):
-            self.result.append(f"</{tag}>")
+        elif tag in PASSTHROUGH_TAGS:
+            self._emit(f"</{tag}>")
         else:
-            self.result.append(f"</{tag}>")
+            self._emit(f"</{tag}>")
 
     def handle_data(self, data):
-        self.result.append(data)
+        self._emit(data, follows_source_lines=True)
         
     def handle_entityref(self, name):
-        self.result.append(f"&{name};")
+        self._emit(f"&{name};")
         
     def handle_charref(self, name):
-        self.result.append(f"&#{name};")
+        self._emit(f"&#{name};")
 
-def normalize_safe_html(md_text):
-    code_blocks = {}
+def _line_origins(segments):
+    origins = []
+    line_origin = None
+    line_has_chars = False
+
+    for text, source_line, follows_source_lines in segments:
+        current_source_line = source_line
+        for char in text:
+            if char == "\n":
+                origins.append(line_origin or current_source_line)
+                line_origin = None
+                line_has_chars = False
+                if follows_source_lines:
+                    current_source_line += 1
+                continue
+            if line_origin is None:
+                line_origin = current_source_line
+            line_has_chars = True
+
+    if line_has_chars:
+        origins.append(line_origin)
+    return origins
+
+
+def normalize_safe_html(md_text, with_source_map=False):
+    protected = {}
+
+    def protect(prefix, content):
+        token = f"__MDVIEW_{prefix}_{uuid.uuid4().hex}__"
+        placeholder = token + ("\n" * content.count("\n"))
+        protected[placeholder] = content
+        return placeholder
     
     def save_block(m):
-        token = f"__MDVIEW_CODE_BLOCK_{uuid.uuid4().hex}__"
-        code_blocks[token] = m.group(0)
-        return token
+        return protect("CODE_BLOCK", m.group(0))
     
     md_text = re.sub(r"(?m)^```[\w]*\n[\s\S]*?^```\s*$", save_block, md_text)
     
     def save_inline(m):
-        token = f"__MDVIEW_INLINE_CODE_{uuid.uuid4().hex}__"
-        code_blocks[token] = m.group(0)
-        return token
+        return protect("INLINE_CODE", m.group(0))
         
     md_text = re.sub(r"`[^`\n]+`", save_inline, md_text)
+
+    def save_autolink(m):
+        return protect("AUTOLINK", m.group(0))
+
+    md_text = re.sub(r"<(?:https?|mailto):[^>\s]+>", save_autolink, md_text)
     
     parser = SafeHtmlPreProcessor()
     parser.feed(md_text)
-    processed = "".join(parser.result)
-    
-    for token, content in code_blocks.items():
-        processed = processed.replace(token, content)
-        
+    segments = []
+    for text, source_line, follows_source_lines in parser.segments:
+        for placeholder, content in protected.items():
+            text = text.replace(placeholder, content)
+        segments.append((text, source_line, follows_source_lines))
+
+    processed = "".join(text for text, _, _ in segments)
+    if with_source_map:
+        return processed, _line_origins(segments)
     return processed
 
 def md_to_html(md):
-    md = normalize_safe_html(md)
-    blocks = parse_blocks(md)
+    md, source_lines = normalize_safe_html(md, with_source_map=True)
+    blocks = parse_blocks(md, source_lines=source_lines)
     ast = Document(blocks)
     return render_html(ast)
